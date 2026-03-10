@@ -24,8 +24,16 @@ import {
   type NightAction,
 } from './game-state.js';
 
+const ALLOWED_ORIGINS = [
+  'https://mafiaonchain.live',
+  'https://www.mafiaonchain.live',
+  'https://test.mafiaonchain.live',
+  'http://localhost:3000',
+  ...(process.env.CORS_EXTRA_ORIGIN ? [process.env.CORS_EXTRA_ORIGIN] : []),
+];
+
 const app = express();
-app.use(cors());
+app.use(cors({ origin: ALLOWED_ORIGINS }));
 app.use(express.json());
 
 const PORT = Number(process.env.PORT) || 3001;
