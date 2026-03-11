@@ -109,6 +109,17 @@ export const DIAMOND_ABI = [
     outputs: [{ name: '', type: 'uint8' }],
     stateMutability: 'view',
   },
+  // ShuffleFacet — read single deck card by index
+  {
+    type: 'function',
+    name: 'getRevealedDeck',
+    inputs: [
+      { name: 'roomId', type: 'uint256' },
+      { name: 'index', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'string' }],
+    stateMutability: 'view',
+  },
   // Events we watch
   {
     type: 'event',
@@ -214,7 +225,6 @@ export async function hasCommittedRole(roomId: bigint, player: Address): Promise
     (pl) => pl.wallet.toLowerCase() === player.toLowerCase()
   );
   if (!p) return false;
-  // FLAG_CONFIRMED_ROLE (0x1) is set when player calls commitAndConfirmRole() in ShuffleFacet
   return (Number(p.flags) & FLAGS.CONFIRMED_ROLE) !== 0;
 }
 
@@ -225,6 +235,19 @@ export async function getSessionKey(mainWallet: Address) {
     functionName: 'sessionKeys',
     args: [mainWallet],
   });
+}
+
+/**
+ * Read a single encrypted card from the on-chain revealed deck.
+ * index = player's position in the room (same order as getPlayers())
+ */
+export async function getRevealedDeckCard(roomId: bigint, index: number): Promise<string> {
+  return publicClient.readContract({
+    address: DIAMOND_ADDRESS,
+    abi: DIAMOND_ABI,
+    functionName: 'getRevealedDeck',
+    args: [roomId, BigInt(index)],
+  }) as Promise<string>;
 }
 
 export async function resolveNight(roomId: bigint, killTarget: Address, healTarget: Address) {
