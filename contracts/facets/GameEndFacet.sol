@@ -16,14 +16,19 @@ interface IGroth16Verifier {
 
 contract GameEndFacet {
 
+    modifier nonReentrant() {
+        LibGame.nonReentrantBefore();
+        _;
+        LibGame.nonReentrantAfter();
+    }
+
     function endGameZK(
         uint256 roomId,
         uint[2] calldata a,
         uint[2][2] calldata b,
         uint[2] calldata c,
         uint[5] calldata input
-    ) external {
-        LibGame.nonReentrantBefore();
+    ) external nonReentrant {
         LibGame.requireNotPaused();
 
         LibStorage.Storage storage ds = LibStorage.s();
@@ -60,8 +65,5 @@ contract GameEndFacet {
         } else {
             revert("ZK: no winner");
         }
-
-        LibGame.nonReentrantAfter();
     }
 }
-

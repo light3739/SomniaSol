@@ -9,7 +9,12 @@ import "../libraries/MafiaTypes.sol";
 contract TournamentFacet {
 
     event PrizeDistributed(uint256 indexed roomId, address indexed winner, uint128 amount);
-    event TournamentCancelled(uint256 indexed tournamentId);
+    
+    modifier nonReentrant() {
+        LibGame.nonReentrantBefore();
+        _;
+        LibGame.nonReentrantAfter();
+    }
 
     uint32 constant REGISTRATION_PERIOD = 24 hours;
 
@@ -18,7 +23,7 @@ contract TournamentFacet {
         uint128 buyIn,
         uint8 maxPlayers,
         uint8 playersPerTable
-    ) external payable {
+    ) external payable nonReentrant {
         LibGame.requireNotPaused();
         LibStorage.Storage storage ds = LibStorage.s();
         uint256 tId = ++ds.nextTournamentId;
@@ -42,11 +47,10 @@ contract TournamentFacet {
             ds.totalLockedFunds += uint128(msg.value);
         }
 
-        emit TournamentCreated(tId, msg.sender, name, buyIn);
+        emit LibGame.TournamentCreated(tId, msg.sender, name, buyIn);
     }
 
-    function cancelTournament(uint256 tournamentId) external {
-        LibGame.nonReentrantBefore();
+    function cancelTournament(uint256 tournamentId) external nonReentrant {
         LibGame.requireNotPaused();
         LibStorage.Storage storage ds = LibStorage.s();
         MafiaTypes.Tournament storage t = ds.tournaments[tournamentId];
@@ -62,15 +66,24 @@ contract TournamentFacet {
         t.phase = MafiaTypes.TournamentPhase.CANCELLED;
         if (ds.activeTournaments[t.organizer] > 0) ds.activeTournaments[t.organizer]--;
         
-        // Refund mechanism for participants would go here if not handled by individual claims
-        // To keep it simple and avoid OOG, we can mark them for claimable refunds
-        // But since this is Buy-In, we should probably return money to participants
+        // Refund all participants
+        address[] storage participants = t.participants;
+        if (t.buyIn > 0 && participants.length > 0) {
+            uint128 refundAmount = t.buyIn;
+            for (uint256 i = 0; i < participants.length; i++) {
+                address p = participants[i];
+                (bool sent, ) = payable(p).call{value: refundAmount}("");
+                if (sent) {
+                    ds.totalLockedFunds -= refundAmount;
+                }
+            }
+            t.prizePool = 0;
+        }
         
-        emit TournamentCancelled(tournamentId);
-        LibGame.nonReentrantAfter();
+        emit LibGame.TournamentCancelled(tournamentId);
     }
 
-    function joinTournament(uint256 tournamentId) external payable {
+    function joinTournament(uint256 tournamentId) external payable nonReentrant {
         LibGame.requireNotPaused();
         LibStorage.Storage storage ds = LibStorage.s();
         MafiaTypes.Tournament storage t = ds.tournaments[tournamentId];
@@ -80,20 +93,19 @@ contract TournamentFacet {
 
         if (t.buyIn > 0) {
             require(msg.value >= t.buyIn, "Insufficient buy-in");
-            t.prizePool += t.buyIn;
-            ds.totalLockedFunds += t.buyIn;
+            t.prizePool += uint128(msg.value);
+            ds.totalLockedFunds += uint128(msg.value);
         }
 
         t.participants.push(msg.sender);
-        emit TournamentJoined(tournamentId, msg.sender);
+        emit LibGame.TournamentJoined(tournamentId, msg.sender);
     }
 
     /**
      * @notice Distribute prizes for a specific game room (Mafia style)
      * @dev Winners get weighted share: Alive x2, Dead x1
      */
-    function distributeMafiaPrizes(uint256 roomId) external {
-        LibGame.nonReentrantBefore();
+    function distributeMafiaPrizes(uint256 roomId) external nonReentrant {
         LibStorage.Storage storage ds = LibStorage.s();
         MafiaTypes.GameRoom storage room = ds.rooms[roomId];
 
@@ -101,10 +113,8 @@ contract TournamentFacet {
         require(!ds.prizesClaimed[roomId], "Already claimed");
         ds.prizesClaimed[roomId] = true;
 
-        // true = mafia won, false = town won
         bool mafiaWon = ds.gameResult[roomId];
 
-        // Front-running protection: Only GM or a winner can trigger distribution
         if (msg.sender != ds.gameMaster) {
             MafiaTypes.Role senderRole = ds.playerRoles[roomId][msg.sender];
             bool senderIsWinner = (mafiaWon && senderRole == MafiaTypes.Role.MAFIA) ||
@@ -117,16 +127,31 @@ contract TournamentFacet {
 
         if (room.tournamentId > 0) {
             MafiaTypes.Tournament storage t = ds.tournaments[room.tournamentId];
-            // For tournament rooms, we distribute a portion of the tournament prize pool
-            // OR the whole pool if it's the final. For now, we'll assume the room pool is set by the organizer.
-            // If tournament pool is used, we take fee from there.
-            uint128 totalPool = t.prizePool;
-            fee = totalPool / 10;
-            prizePool = totalPool - fee;
+            // Multi-room support: Distribute a fraction of the total pool based on players in this room
+            // totalPool = (t.prizePool * room.maxPlayers) / t.maxPlayers
+            uint128 totalPoolFraction;
+            if (t.maxPlayers > 0) {
+                totalPoolFraction = uint128((uint256(t.prizePool) * room.maxPlayers) / t.maxPlayers);
+            } else {
+                totalPoolFraction = t.prizePool;
+            }
+            
+            fee = totalPoolFraction / 10;
+            prizePool = totalPoolFraction - fee;
             ds.platformFeeBalance += fee;
-            ds.totalLockedFunds -= totalPool;
-            t.prizePool = 0; // Distributed
-            t.prizesClaimed = true;
+            ds.totalLockedFunds -= totalPoolFraction;
+            
+            // Subtract the fractional pool from the total tournament prize pool
+            if (t.prizePool >= totalPoolFraction) {
+                t.prizePool -= totalPoolFraction;
+            } else {
+                t.prizePool = 0;
+            }
+            
+            // If it was the last room or only room, mark claimed
+            if (t.prizePool == 0) {
+                t.prizesClaimed = true;
+            }
         } else {
             uint128 totalPool = room.depositPool;
             fee = totalPool / 10; 
@@ -137,10 +162,7 @@ contract TournamentFacet {
 
         MafiaTypes.Player[] storage players = ds.roomPlayers[roomId];
         uint256 totalShares = 0;
-        
-        // Track winners and their share multiplier
         uint8[] memory multipliers = new uint8[](players.length);
-        uint256 winnerCount = 0;
 
         for (uint8 i = 0; i < players.length; i++) {
             MafiaTypes.Role role = ds.playerRoles[roomId][players[i].wallet];
@@ -153,24 +175,20 @@ contract TournamentFacet {
             }
 
             if (isWinner) {
-                bool isAlive = (players[i].flags & LibGame.FLAG_ACTIVE) != 0;
-                uint8 m = isAlive ? 2 : 1;
+                uint8 m = ((players[i].flags & LibGame.FLAG_ACTIVE) != 0) ? 2 : 1;
                 multipliers[i] = m;
                 totalShares += m;
-                winnerCount++;
             }
         }
 
         require(totalShares > 0, "No winners found");
 
         uint128 totalDistributed = 0;
-        // Distribute portions
         for (uint8 i = 0; i < players.length; i++) {
             if (multipliers[i] > 0) {
                 uint128 payout = uint128((uint256(prizePool) * multipliers[i]) / totalShares);
                 totalDistributed += payout;
                 address winner = players[i].wallet;
-                
                 (bool sent, ) = payable(winner).call{value: payout}("");
                 if (sent) {
                     emit PrizeDistributed(roomId, winner, payout);
@@ -178,17 +196,13 @@ contract TournamentFacet {
             }
         }
 
-        // Handle rounding dust (residue goes to platform)
         if (prizePool > totalDistributed) {
-            uint128 dust = prizePool - totalDistributed;
-            ds.platformFeeBalance += dust;
+            ds.platformFeeBalance += (prizePool - totalDistributed);
         }
 
         if (room.tournamentId > 0) {
             address organizer = ds.tournaments[room.tournamentId].organizer;
             if (ds.activeTournaments[organizer] > 0) ds.activeTournaments[organizer]--;
         }
-
-        LibGame.nonReentrantAfter();
     }
 }

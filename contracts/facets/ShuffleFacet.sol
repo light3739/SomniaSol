@@ -8,8 +8,13 @@ import "../libraries/MafiaTypes.sol";
 /// @title ShuffleFacet — Deck commit/reveal, key sharing, role confirmation
 contract ShuffleFacet {
 
-    function commitDeck(uint256 roomId, bytes32 deckHash) external {
+    modifier nonReentrant() {
         LibGame.nonReentrantBefore();
+        _;
+        LibGame.nonReentrantAfter();
+    }
+
+    function commitDeck(uint256 roomId, bytes32 deckHash) external nonReentrant {
         LibGame.requireNotPaused();
         address player = LibGame.requireActiveParticipant(roomId);
         LibGame.requireBeforeDeadline(roomId);
@@ -25,11 +30,9 @@ contract ShuffleFacet {
         LibGame.setFlag(roomId, player, LibGame.FLAG_DECK_COMMITTED);
 
         emit LibGame.DeckCommitted(roomId, player, deckHash);
-        LibGame.nonReentrantAfter();
     }
 
-    function revealDeck(uint256 roomId, string[] calldata deck, string calldata salt) external {
-        LibGame.nonReentrantBefore();
+    function revealDeck(uint256 roomId, string[] calldata deck, string calldata salt) external nonReentrant {
         LibGame.requireNotPaused();
         address player = LibGame.requireActiveParticipant(roomId);
         LibGame.requireBeforeDeadline(roomId);
@@ -58,16 +61,13 @@ contract ShuffleFacet {
         if (nextIndex >= ds.roomPlayers[roomId].length) {
             LibGame.transitionToReveal(roomId);
         }
-
-        LibGame.nonReentrantAfter();
     }
 
     function shareKeysToAll(
         uint256 roomId,
         address[] calldata recipients,
         bytes[] calldata encryptedKeys
-    ) external {
-        LibGame.nonReentrantBefore();
+    ) external nonReentrant {
         LibGame.requireNotPaused();
         address player = LibGame.requireActiveParticipant(roomId);
         LibGame.requireBeforeDeadline(roomId);
@@ -90,12 +90,9 @@ contract ShuffleFacet {
         room.keysSharedCount++;
         emit LibGame.KeysSharedToAll(roomId, player);
         if (room.keysSharedCount == room.aliveCount) emit LibGame.AllKeysShared(roomId);
-
-        LibGame.nonReentrantAfter();
     }
 
-    function commitAndConfirmRole(uint256 roomId, bytes32 roleHash) external {
-        LibGame.nonReentrantBefore();
+    function commitAndConfirmRole(uint256 roomId, bytes32 roleHash) external nonReentrant {
         LibGame.requireNotPaused();
         address player = LibGame.requireActiveParticipant(roomId);
         LibGame.requireBeforeDeadline(roomId);
@@ -117,12 +114,9 @@ contract ShuffleFacet {
             LibGame.transitionToDay(roomId);
             emit LibGame.AllRolesConfirmed(roomId);
         }
-
-        LibGame.nonReentrantAfter();
     }
 
-    function commitRole(uint256 roomId, bytes32 roleHash) external {
-        LibGame.nonReentrantBefore();
+    function commitRole(uint256 roomId, bytes32 roleHash) external nonReentrant {
         LibGame.requireNotPaused();
         address player = LibGame.requireActiveParticipant(roomId);
 
@@ -131,12 +125,9 @@ contract ShuffleFacet {
         if (ds.roleCommits[roomId][player] != bytes32(0)) revert LibGame.RoleAlreadyCommitted();
         ds.roleCommits[roomId][player] = roleHash;
         emit LibGame.RoleCommitted(roomId, player, roleHash);
-
-        LibGame.nonReentrantAfter();
     }
 
-    function confirmRole(uint256 roomId) external {
-        LibGame.nonReentrantBefore();
+    function confirmRole(uint256 roomId) external nonReentrant {
         LibGame.requireNotPaused();
         address player = LibGame.requireActiveParticipant(roomId);
         LibGame.requireBeforeDeadline(roomId);
@@ -154,8 +145,6 @@ contract ShuffleFacet {
             LibGame.transitionToDay(roomId);
             emit LibGame.AllRolesConfirmed(roomId);
         }
-
-        LibGame.nonReentrantAfter();
     }
 
     // ---- View ----

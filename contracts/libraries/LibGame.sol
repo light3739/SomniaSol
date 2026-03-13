@@ -114,6 +114,9 @@ library LibGame {
     event DepositSlashed(uint256 indexed roomId, address player, uint128 amount, string reason);
     event DepositRefunded(uint256 indexed roomId, address player, uint128 amount);
     event FeeWithdrawalInitiated(address indexed owner, uint128 amount, uint256 readyAt);
+    event TournamentCreated(uint256 indexed tournamentId, address organizer, string name, uint128 buyIn);
+    event TournamentJoined(uint256 indexed tournamentId, address player);
+    event TournamentCancelled(uint256 indexed tournamentId);
 
     // ---- Reentrancy guard ----
     function nonReentrantBefore() internal {
@@ -341,8 +344,16 @@ library LibGame {
                 ds.platformFeeBalance += amount;
                 ds.totalLockedFunds -= amount;
             } else {
-                // Slashed funds stay in ds.rooms[roomId].depositPool to be claimed by winners
-                // totalLockedFunds remains unchanged as the money is still in the system
+                // Slashed funds stay in the contract, but if this is an individual room
+                // with a deposit pool, we must move it from room.depositPool to platformFeeBalance
+                // OR reduce room.depositPool and increase platformFeeBalance.
+                // The user says: "depositPool doesn't decrease -> double counting".
+                // If winners claim from room.depositPool, and we don't decrease it, 
+                // the slashed money is effectively paid out to winners AND potentially stuck.
+                // Let's reduce it.
+                ds.rooms[roomId].depositPool -= amount;
+                ds.platformFeeBalance += amount;
+                // totalLockedFunds remains same as it's still in the contract.
             }
             emit DepositSlashed(roomId, player, amount, reason);
         }

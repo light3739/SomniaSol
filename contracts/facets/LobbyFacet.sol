@@ -8,6 +8,12 @@ import "../libraries/MafiaTypes.sol";
 /// @title LobbyFacet — Room creation, joining, game start, session keys, admin
 contract LobbyFacet {
 
+    modifier nonReentrant() {
+        LibGame.nonReentrantBefore();
+        _;
+        LibGame.nonReentrantAfter();
+    }
+
     // ===================== ADMIN =====================
 
     function setZkVerifier(address v) external {
@@ -47,9 +53,8 @@ contract LobbyFacet {
         emit LibGame.FeeWithdrawalInitiated(msg.sender, ds.platformFeeBalance, ds.feeWithdrawalReadyAt);
     }
 
-    function withdrawFees() external {
+    function withdrawFees() external nonReentrant {
         LibGame.requireOwner();
-        LibGame.nonReentrantBefore();
         LibStorage.Storage storage ds = LibStorage.s();
         
         require(ds.feeWithdrawalReadyAt != 0, "Withdrawal not initiated");
@@ -83,16 +88,8 @@ contract LobbyFacet {
 
     // ===================== ROOM CREATION =====================
 
-    function createAndJoin(
-        string calldata roomName,
-        uint8 maxPlayers,
-        string calldata nickname,
-        bytes calldata publicKey,
-        address sessionAddress,
-        bool isPrivate,
-        uint256 tournamentId
-    ) external payable returns (uint256) {
-        LibGame.nonReentrantBefore();
+        tournamentId
+    ) external payable nonReentrant returns (uint256) {
         LibGame.requireNotPaused();
 
         if (maxPlayers < 4 || maxPlayers > 20) revert LibGame.InvalidPlayerCount();
@@ -158,7 +155,6 @@ contract LobbyFacet {
 
         emit LibGame.PlayerJoined(roomId, msg.sender, nickname, sessionAddress);
 
-        LibGame.nonReentrantAfter();
         return roomId;
     }
 
@@ -168,8 +164,7 @@ contract LobbyFacet {
         bytes calldata publicKey,
         address sessionAddress,
         bytes calldata gmSignature
-    ) external payable {
-        LibGame.nonReentrantBefore();
+    ) external payable nonReentrant {
         LibGame.requireNotPaused();
 
         LibStorage.Storage storage ds = LibStorage.s();
@@ -214,12 +209,9 @@ contract LobbyFacet {
         }
 
         emit LibGame.PlayerJoined(roomId, msg.sender, nickname, sessionAddress);
-
-        LibGame.nonReentrantAfter();
     }
 
-    function startGame(uint256 roomId) external {
-        LibGame.nonReentrantBefore();
+    function startGame(uint256 roomId) external nonReentrant {
         LibGame.requireNotPaused();
         LibGame.requireActiveParticipant(roomId);
 
@@ -234,8 +226,6 @@ contract LobbyFacet {
         room.phaseDeadline = uint32(block.timestamp + LibGame.PHASE_TIMEOUT);
 
         emit LibGame.GameStarted(roomId);
-
-        LibGame.nonReentrantAfter();
     }
 
     // ===================== VIEW FUNCTIONS =====================
