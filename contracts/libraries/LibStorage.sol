@@ -69,6 +69,8 @@ library LibStorage {
         mapping(address => uint8) activeTournaments; // 🆕 Track active tournaments per organizer to prevent spam
         uint32 feeWithdrawalReadyAt;            // 🆕 Timelock for fee withdrawal
         mapping(uint256 => mapping(address => bool)) isTournamentParticipant; // 🆕 Prevent double join
+        mapping(uint256 => bool) tournamentWhitelistEnabled; // 🆕 Toggle for whitelist
+        mapping(uint256 => mapping(address => bool)) tournamentWhitelist; // 🆕 Whitelisted addresses per tournament
 
         // ---- Reentrancy ----
         uint256 reentrancyStatus;

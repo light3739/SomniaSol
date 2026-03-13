@@ -38,13 +38,13 @@ contract GameEndFacet {
             revert LibGame.WrongPhase();
         require(ds.zkVerifier != address(0), "Verifier not set");
 
-        bool proofOk = IGroth16Verifier(ds.zkVerifier).verifyProof(a, b, c, input);
-        require(proofOk, "Invalid ZK proof");
-
-        // Prevent replay attacks
+        // Prevent replay attacks (Effect before external call)
         bytes32 nullifier = keccak256(abi.encode(a, b, c, input));
         require(!ds.proofNullifiers[nullifier], "Proof already used");
         ds.proofNullifiers[nullifier] = true;
+
+        bool proofOk = IGroth16Verifier(ds.zkVerifier).verifyProof(a, b, c, input);
+        require(proofOk, "Invalid ZK proof");
 
         uint256 townWin    = input[0];
         uint256 mafiaWin   = input[1];

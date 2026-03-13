@@ -20,10 +20,10 @@ contract NightFacet {
         LibStorage.Storage storage ds = LibStorage.s();
         
         if (ds.rooms[roomId].phase != MafiaTypes.GamePhase.NIGHT) revert LibGame.WrongPhase();
-        if (ds.playerRoles[roomId][player] != MafiaTypes.Role.MAFIA) revert LibGame.NotAuthorized();
+        if (ds.playerRoles[roomId][player] != MafiaTypes.Role.MAFIA) revert LibGame.NotMafiaMember();
 
         // Obfuscated: No sender address in event
-        emit LibGame.MafiaMessageSent(roomId, encryptedMessage);
+        emit LibGame.MafiaMessageSent(roomId, bytes(encryptedMessage));
     }
 
     function commitMafiaTarget(uint256 roomId, bytes32 targetHash) external nonReentrant {
@@ -34,16 +34,17 @@ contract NightFacet {
         LibStorage.Storage storage ds = LibStorage.s();
         MafiaTypes.GameRoom storage room = ds.rooms[roomId];
         if (room.phase != MafiaTypes.GamePhase.NIGHT) revert LibGame.WrongPhase();
-        if (ds.playerRoles[roomId][player] != MafiaTypes.Role.MAFIA) revert LibGame.NotAuthorized();
-        if (ds.mafiaTargetCommits[roomId][player] != bytes32(0)) revert LibGame.AlreadyCommitted();
+        if (ds.playerRoles[roomId][player] != MafiaTypes.Role.MAFIA) revert LibGame.NotMafiaMember();
+        if (ds.mafiaTargetCommits[roomId][player].commitHash != bytes32(0)) revert LibGame.AlreadyCommitted();
 
-        ds.mafiaTargetCommits[roomId][player] = targetHash;
-        room.committedCount++;
+        ds.mafiaTargetCommits[roomId][player].commitHash = targetHash;
+        ds.mafiaTargetCommits[roomId][player].revealed = false;
+        ds.mafiaCommittedCount[roomId]++;
 
         // Obfuscated: No player address in event
         emit LibGame.MafiaTargetCommitted(roomId, targetHash);
 
-        if (room.committedCount == LibGame.countMafia(roomId)) {
+        if (ds.mafiaCommittedCount[roomId] == LibGame.countMafia(roomId)) {
             emit LibGame.AllMafiaTargetsCommitted(roomId);
         }
     }
@@ -56,19 +57,20 @@ contract NightFacet {
         LibStorage.Storage storage ds = LibStorage.s();
         MafiaTypes.GameRoom storage room = ds.rooms[roomId];
         if (room.phase != MafiaTypes.GamePhase.NIGHT) revert LibGame.WrongPhase();
-        if (ds.playerRoles[roomId][player] != MafiaTypes.Role.MAFIA) revert LibGame.NotAuthorized();
+        if (ds.playerRoles[roomId][player] != MafiaTypes.Role.MAFIA) revert LibGame.NotMafiaMember();
 
         bytes32 sharedTargetHash = keccak256(abi.encode(target, salt));
-        if (sharedTargetHash != ds.mafiaTargetCommits[roomId][player]) revert LibGame.InvalidReveal();
+        if (sharedTargetHash != ds.mafiaTargetCommits[roomId][player].commitHash) revert LibGame.InvalidReveal();
 
-        ds.mafiaRevealedTargets[roomId][player] = target;
+        ds.mafiaTargetCommits[roomId][player].target = target;
+        ds.mafiaTargetCommits[roomId][player].revealed = true;
         LibGame.setFlag(roomId, player, LibGame.FLAG_HAS_REVEALED);
-        room.revealedCount++;
+        ds.mafiaRevealedCount[roomId]++;
 
         // Obfuscated: No player address in event
         emit LibGame.MafiaTargetRevealed(roomId, target);
 
-        if (room.revealedCount == LibGame.countMafia(roomId)) {
+        if (ds.mafiaRevealedCount[roomId] == LibGame.countMafia(roomId)) {
             LibGame.finalizeNight(roomId);
         }
     }

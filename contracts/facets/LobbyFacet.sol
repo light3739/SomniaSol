@@ -69,8 +69,6 @@ contract LobbyFacet {
 
         (bool sent, ) = payable(msg.sender).call{value: amount}("");
         require(sent, "Failed to withdraw");
-        
-        LibGame.nonReentrantAfter();
     }
 
     // ===================== SESSION KEYS =====================
@@ -88,7 +86,14 @@ contract LobbyFacet {
 
     // ===================== ROOM CREATION =====================
 
-        tournamentId
+    function createAndJoin(
+        string calldata roomName,
+        uint8 maxPlayers,
+        string calldata nickname,
+        bytes calldata publicKey,
+        address sessionAddress,
+        bool isPrivate,
+        uint256 tournamentId
     ) external payable nonReentrant returns (uint256) {
         LibGame.requireNotPaused();
 

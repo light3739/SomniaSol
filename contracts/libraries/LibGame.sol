@@ -73,6 +73,8 @@ library LibGame {
     error DepositAlreadyRefunded();
     error NotGameMaster();
     error NotOwner();
+    error TooEarly();
+    error AlreadyClaimed();
 
     // ---- Events ----
     event RoomCreated(uint256 indexed roomId, address host, string name, uint256 maxPlayers);
@@ -104,7 +106,9 @@ library LibGame {
     event RoleRevealed(uint256 indexed roomId, address player, MafiaTypes.Role role);
     event MafiaMessageSent(uint256 indexed roomId, bytes encryptedMessage);
     event MafiaTargetCommitted(uint256 indexed roomId, bytes32 commitHash);
+    event AllMafiaTargetsCommitted(uint256 indexed roomId);
     event MafiaTargetRevealed(uint256 indexed roomId, address target);
+    event AllMafiaTargetsRevealed(uint256 indexed roomId);
     event MafiaConsensusReached(uint256 indexed roomId, address target, bool success);
     event MafiaCheaterPunished(uint256 indexed roomId, address cheater, MafiaTypes.Role actualRole);
     event ZkVerifierUpdated(address indexed newVerifier);
@@ -117,6 +121,7 @@ library LibGame {
     event TournamentCreated(uint256 indexed tournamentId, address organizer, string name, uint128 buyIn);
     event TournamentJoined(uint256 indexed tournamentId, address player);
     event TournamentCancelled(uint256 indexed tournamentId);
+    event RefundFailed(uint256 indexed tournamentId, address player, uint128 amount);
 
     // ---- Reentrancy guard ----
     function nonReentrantBefore() internal {
@@ -289,6 +294,88 @@ library LibGame {
             }
         }
         return (mafiaCount > 0 && mafiaCount >= townCount, mafiaCount == 0 && townCount > 0);
+    }
+
+    function countMafia(uint256 roomId) internal view returns (uint8) {
+        LibStorage.Storage storage ds = LibStorage.s();
+        uint8 count = 0;
+        MafiaTypes.Player[] storage players = ds.roomPlayers[roomId];
+        for (uint8 i = 0; i < players.length; i++) {
+            if ((players[i].flags & FLAG_ACTIVE) != 0) {
+                if (ds.playerRoles[roomId][players[i].wallet] == MafiaTypes.Role.MAFIA) count++;
+            }
+        }
+        return count;
+    }
+
+    function finalizeVotingInternal(uint256 roomId) internal {
+        LibStorage.Storage storage ds = LibStorage.s();
+        MafiaTypes.Player[] storage players = ds.roomPlayers[roomId];
+
+        address eliminated = address(0);
+        uint8 maxVotes = 0;
+        bool tie = false;
+
+        for (uint256 i = 0; i < players.length; i++) {
+            address p = players[i].wallet;
+            uint8 v = ds.voteCounts[roomId][p];
+            if (v > maxVotes) {
+                maxVotes = v;
+                eliminated = p;
+                tie = false;
+            } else if (v == maxVotes && v > 0) {
+                tie = true;
+            }
+        }
+
+        if (!tie && eliminated != address(0)) {
+            killPlayer(roomId, eliminated);
+            emit VotingFinalized(roomId, eliminated, maxVotes);
+        } else {
+            emit VotingFinalized(roomId, address(0), 0);
+        }
+
+        if (!checkWinCondition(roomId)) {
+            transitionToNight(roomId);
+        }
+    }
+
+    function finalizeNight(uint256 roomId) internal {
+        LibStorage.Storage storage ds = LibStorage.s();
+        MafiaTypes.Player[] storage players = ds.roomPlayers[roomId];
+
+        // Simple consensus: find the target with most reveals
+        mapping(address => uint8) storage targetCounts = ds.voteCounts[roomId]; // repurpose mapping for night
+        address victim = address(0);
+        uint8 maxReveals = 0;
+
+        for (uint256 i = 0; i < players.length; i++) {
+            address p = players[i].wallet;
+            address t = ds.mafiaTargetCommits[roomId][p].target;
+            if (t != address(0)) {
+                targetCounts[t]++;
+                if (targetCounts[t] > maxReveals) {
+                    maxReveals = targetCounts[t];
+                    victim = t;
+                }
+            }
+        }
+
+        if (victim != address(0)) {
+            killPlayer(roomId, victim);
+            emit NightFinalized(roomId, victim, address(0));
+        } else {
+            emit NightFinalized(roomId, address(0), address(0));
+        }
+
+        // Cleanup night repurpose
+        for (uint256 i = 0; i < players.length; i++) {
+            delete targetCounts[players[i].wallet];
+        }
+
+        if (!checkWinCondition(roomId)) {
+            transitionToDay(roomId);
+        }
     }
 
     function endGame(uint256 roomId, string memory reason) internal {

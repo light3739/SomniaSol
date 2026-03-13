@@ -46,13 +46,13 @@ contract VotingFacet {
         if (room.phase != MafiaTypes.GamePhase.VOTING) revert LibGame.WrongPhase();
         if (LibGame.hasFlag(roomId, player, LibGame.FLAG_HAS_VOTED)) revert LibGame.AlreadyVoted();
         if (!ds.isPlayerInRoom[roomId][target]) revert LibGame.NotParticipant();
-        if ((ds.roomPlayers[roomId][ds.playerIndex[roomId][target]].flags & LibGame.FLAG_ACTIVE) == 0) revert LibGame.NotActive();
+        if ((ds.roomPlayers[roomId][ds.playerIndex[roomId][target]].flags & LibGame.FLAG_ACTIVE) == 0) revert LibGame.PlayerInactive();
 
         ds.voteCounts[roomId][target]++;
         LibGame.setFlag(roomId, player, LibGame.FLAG_HAS_VOTED);
         room.votedCount++;
 
-        emit LibGame.PlayerVoted(roomId, player, target);
+        emit LibGame.VoteCast(roomId, player, target);
 
         if (room.votedCount == room.aliveCount) {
             LibGame.finalizeVotingInternal(roomId);
