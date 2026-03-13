@@ -23,7 +23,9 @@ contract TournamentFacet {
         uint128 buyIn,
         uint8 maxPlayers,
         uint8 playersPerTable,
-        bytes32 passwordHash
+        bytes32 passwordHash,
+        address paymentToken,
+        uint128 initialPrize
     ) external payable nonReentrant {
         LibGame.requireNotPaused();
         LibStorage.Storage storage ds = LibStorage.s();
@@ -40,15 +42,21 @@ contract TournamentFacet {
         t.playersPerTable = playersPerTable;
         t.phase = MafiaTypes.TournamentPhase.REGISTRATION;
         t.registrationDeadline = uint32(block.timestamp + REGISTRATION_PERIOD);
+        t.paymentToken = paymentToken;
+        t.passwordHash = passwordHash;
 
         // If Freeroll (buyIn == 0), organizer must fund the prize pool
         if (buyIn == 0) {
-            require(msg.value > 0, "Freeroll requires prize pool");
-            t.prizePool = uint128(msg.value);
-            ds.totalLockedFunds += uint128(msg.value);
+            require(initialPrize > 0 || msg.value > 0, "Freeroll requires prize pool");
+            uint128 funding = (paymentToken == address(0)) ? uint128(msg.value) : initialPrize;
+            
+            if (paymentToken != address(0)) {
+                LibGame.safeReceive(paymentToken, msg.sender, funding);
+            }
+            
+            t.prizePool = funding;
+            ds.totalLockedFundsByToken[paymentToken] += funding;
         }
-
-        t.passwordHash = passwordHash;
 
         emit LibGame.TournamentCreated(tId, msg.sender, name, buyIn);
     }
@@ -85,20 +93,13 @@ contract TournamentFacet {
             }
 
             // Global effects
-            ds.totalLockedFunds -= totalRefunded;
+            ds.totalLockedFundsByToken[t.paymentToken] -= totalRefunded;
             t.prizePool = 0;
 
             // Pass 2: External calls (Interactions)
             for (uint256 i = 0; i < participants.length; i++) {
                 address p = participants[i];
-                // Note: p.call doesn't depend on isTournamentParticipant being true 
-                // because we already reduced totalRefunded above for marked players.
-                // However, for precision, we iterate again. 
-                // To remember WHO to call without extra storage, we can't easily.
-                // But in cancelTournament, usually everyone in the list gets refunded.
-                // Let's use a simpler CEI: we already set flags to false.
-                (bool sent, ) = payable(p).call{value: refundAmount}("");
-                if (!sent) emit LibGame.RefundFailed(tournamentId, p, refundAmount);
+                LibGame.safeTransfer(t.paymentToken, p, refundAmount);
             }
         }
         
@@ -125,9 +126,9 @@ contract TournamentFacet {
         }
 
         if (t.buyIn > 0) {
-            require(msg.value >= t.buyIn, "Insufficient buy-in");
-            t.prizePool += uint128(msg.value);
-            ds.totalLockedFunds += uint128(msg.value);
+            LibGame.safeReceive(t.paymentToken, msg.sender, t.buyIn);
+            t.prizePool += t.buyIn;
+            ds.totalLockedFundsByToken[t.paymentToken] += t.buyIn;
         }
 
         t.participants.push(msg.sender);
@@ -161,8 +162,9 @@ contract TournamentFacet {
         }
         require(msg.sender == ds.gameMaster || isWinner, "Not authorized to distribute");
 
+        MafiaTypes.Tournament storage t = ds.tournaments[room.tournamentId];
         ds.prizesClaimed[roomId] = true;
-        ds.totalLockedFunds -= prizePool;
+        ds.totalLockedFundsByToken[t.paymentToken] -= prizePool;
 
         MafiaTypes.Player[] storage players = ds.roomPlayers[roomId];
         uint256 totalShares = 0;
@@ -202,7 +204,7 @@ contract TournamentFacet {
 
         // Effects before Interactions
         if (prizePool > totalDistributed) {
-            ds.platformFeeBalance += (prizePool - totalDistributed);
+            ds.platformFeeBalances[t.paymentToken] += (prizePool - totalDistributed);
         }
 
         if (room.tournamentId > 0) {
@@ -213,10 +215,8 @@ contract TournamentFacet {
         // Interactions
         for (uint8 i = 0; i < winnersAddresses.length; i++) {
             if (payouts[i] > 0) {
-                (bool sent, ) = payable(winnersAddresses[i]).call{value: payouts[i]}("");
-                if (sent) {
-                    emit PrizeDistributed(roomId, winnersAddresses[i], payouts[i]);
-                }
+                LibGame.safeTransfer(t.paymentToken, winnersAddresses[i], payouts[i]);
+                emit PrizeDistributed(roomId, winnersAddresses[i], payouts[i]);
             }
         }
     }

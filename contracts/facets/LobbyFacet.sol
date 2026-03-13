@@ -45,30 +45,30 @@ contract LobbyFacet {
         emit LibGame.EmergencyUnpause(msg.sender);
     }
 
-    function initiateFeeWithdrawal() external {
+    function initiateFeeWithdrawal(address token) external {
         LibGame.requireOwner();
         LibStorage.Storage storage ds = LibStorage.s();
-        require(ds.platformFeeBalance > 0, "No fees to withdraw");
-        ds.feeWithdrawalReadyAt = uint32(block.timestamp + 24 hours);
-        emit LibGame.FeeWithdrawalInitiated(msg.sender, ds.platformFeeBalance, ds.feeWithdrawalReadyAt);
+        uint256 amount = ds.platformFeeBalances[token];
+        require(amount > 0, "No fees to withdraw");
+        ds.feeWithdrawalReadyAt[token] = uint32(block.timestamp + 24 hours);
+        emit LibGame.FeeWithdrawalInitiated(msg.sender, amount, ds.feeWithdrawalReadyAt[token]);
     }
 
-    function withdrawFees() external nonReentrant {
+    function withdrawFees(address token) external nonReentrant {
         LibGame.requireOwner();
         LibStorage.Storage storage ds = LibStorage.s();
         
-        require(ds.feeWithdrawalReadyAt != 0, "Withdrawal not initiated");
-        require(block.timestamp >= ds.feeWithdrawalReadyAt, "Timelock not expired");
-        require(block.timestamp <= ds.feeWithdrawalReadyAt + 48 hours, "Timelock expired, re-initiate");
+        require(ds.feeWithdrawalReadyAt[token] != 0, "Withdrawal not initiated");
+        require(block.timestamp >= ds.feeWithdrawalReadyAt[token], "Timelock not expired");
+        require(block.timestamp <= ds.feeWithdrawalReadyAt[token] + 48 hours, "Timelock expired");
 
-        uint128 amount = ds.platformFeeBalance;
+        uint256 amount = ds.platformFeeBalances[token];
         require(amount > 0, "No fees to withdraw");
         
-        ds.platformFeeBalance = 0;
-        ds.feeWithdrawalReadyAt = 0;
+        ds.platformFeeBalances[token] = 0;
+        ds.feeWithdrawalReadyAt[token] = 0;
 
-        (bool sent, ) = payable(msg.sender).call{value: amount}("");
-        require(sent, "Failed to withdraw");
+        LibGame.safeTransfer(token, msg.sender, amount);
     }
 
     // ===================== SESSION KEYS =====================

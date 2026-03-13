@@ -64,10 +64,10 @@ library LibStorage {
         uint256 nextRoomId;
         uint256 nextTournamentId;
         mapping(uint256 => MafiaTypes.Tournament) tournaments;
-        uint128 platformFeeBalance;             // Accumulated platform fees
-        uint128 totalLockedFunds;               // Total funds locked in active games/tournaments
-        mapping(address => uint8) activeTournaments; // 🆕 Track active tournaments per organizer to prevent spam
-        uint32 feeWithdrawalReadyAt;            // 🆕 Timelock for fee withdrawal
+        mapping(address => uint256) platformFeeBalances; // 🆕 per-token fees
+        mapping(address => uint256) totalLockedFundsByToken; // 🆕 per-token locked funds
+        mapping(address => uint8) activeTournaments; // 🆕 Track active tournaments per organizer
+        mapping(address => uint32) feeWithdrawalReadyAt; // 🆕 Timelock per token
         mapping(uint256 => mapping(address => bool)) isTournamentParticipant; // 🆕 Prevent double join
         mapping(uint256 => bool) tournamentWhitelistEnabled; // 🆕 Toggle for whitelist
         mapping(uint256 => mapping(address => bool)) tournamentWhitelist; // 🆕 Whitelisted addresses per tournament

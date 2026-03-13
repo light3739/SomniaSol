@@ -3,6 +3,8 @@ pragma solidity ^0.8.28;
 
 import "./MafiaTypes.sol";
 import "./LibStorage.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title LibGame — Shared helpers used across multiple facets
 library LibGame {
@@ -14,6 +16,8 @@ library LibGame {
     uint32 constant SESSION_DURATION = 4 hours;
     uint32 constant MAX_ARRAY_SIZE = 50;
     uint32 public constant CANCEL_GRACE_PERIOD = 2 hours; // 🆕 Grace period after which anyone can cancel tournament
+
+    using SafeERC20 for IERC20;
 
     // ---- Player flags (bitfield) ----
     uint32 constant FLAG_CONFIRMED_ROLE    = 0x1;
@@ -114,14 +118,14 @@ library LibGame {
     event ZkVerifierUpdated(address indexed newVerifier);
     event GameMasterUpdated(address indexed newGameMaster);
     event NightResolvedByGM(uint256 indexed roomId, address killed, address healed);
-    event DepositCollected(uint256 indexed roomId, address player, uint128 amount);
-    event DepositSlashed(uint256 indexed roomId, address player, uint128 amount, string reason);
-    event DepositRefunded(uint256 indexed roomId, address player, uint128 amount);
-    event FeeWithdrawalInitiated(address indexed owner, uint128 amount, uint256 readyAt);
-    event TournamentCreated(uint256 indexed tournamentId, address organizer, string name, uint128 buyIn);
+    event DepositCollected(uint256 indexed roomId, address player, uint256 amount);
+    event DepositSlashed(uint256 indexed roomId, address player, uint256 amount, string reason);
+    event DepositRefunded(uint256 indexed roomId, address player, uint256 amount);
+    event FeeWithdrawalInitiated(address indexed owner, uint256 amount, uint256 readyAt);
+    event TournamentCreated(uint256 indexed tournamentId, address organizer, string name, uint256 buyIn);
     event TournamentJoined(uint256 indexed tournamentId, address player);
     event TournamentCancelled(uint256 indexed tournamentId);
-    event RefundFailed(uint256 indexed tournamentId, address player, uint128 amount);
+    event RefundFailed(uint256 indexed tournamentId, address player, uint256 amount);
 
     // ---- Reentrancy guard ----
     function nonReentrantBefore() internal {
@@ -417,7 +421,7 @@ library LibGame {
         uint128 amount = uint128(msg.value);
         ds.playerDeposits[roomId][player] += amount;
         ds.rooms[roomId].depositPool += amount;
-        ds.totalLockedFunds += amount;
+        ds.totalLockedFundsByToken[address(0)] += amount;
         emit DepositCollected(roomId, player, amount);
     }
 
@@ -426,23 +430,21 @@ library LibGame {
         uint128 amount = ds.playerDeposits[roomId][player];
         if (amount > 0) {
             ds.playerDeposits[roomId][player] = 0;
-            // If prizes already distributed, slashed funds go to platform fees to avoid hanging in contract
+            
+            address token = address(0); // Default to native
+            uint256 tId = ds.rooms[roomId].tournamentId;
+            if (tId > 0) {
+                token = ds.tournaments[tId].paymentToken;
+            }
+
+            // If prizes already distributed, slashed funds go to platform fees
             if (ds.prizesClaimed[roomId]) {
-                ds.platformFeeBalance += amount;
-                ds.totalLockedFunds -= amount;
+                ds.platformFeeBalances[token] += amount;
+                ds.totalLockedFundsByToken[token] -= amount;
             } else {
-                // Slashed funds stay in the contract, but if this is an individual room
-                // with a deposit pool, we must move it from room.depositPool to platformFeeBalance
-                // OR reduce room.depositPool and increase platformFeeBalance.
-                // The user says: "depositPool doesn't decrease -> double counting".
-                // If winners claim from room.depositPool, and we don't decrease it, 
-                // the slashed money is effectively paid out to winners AND potentially stuck.
-                // Let's reduce it.
                 ds.rooms[roomId].depositPool -= amount;
-                ds.platformFeeBalance += amount;
-                // Corrected: totalLockedFunds must decrease when moving to platform fees 
-                // because platform fees are withdrawn separately.
-                ds.totalLockedFunds -= amount;
+                ds.platformFeeBalances[token] += amount;
+                ds.totalLockedFundsByToken[token] -= amount;
             }
             emit DepositSlashed(roomId, player, amount, reason);
         }
@@ -453,14 +455,19 @@ library LibGame {
         if (ds.depositRefunded[roomId][player]) revert DepositAlreadyRefunded();
         uint128 amount = ds.playerDeposits[roomId][player];
         if (amount > 0) {
+            address token = address(0);
+            uint256 tId = ds.rooms[roomId].tournamentId;
+            if (tId > 0) {
+                token = ds.tournaments[tId].paymentToken;
+            }
+
             // Checks-Effects-Interactions (CEI)
             ds.depositRefunded[roomId][player] = true;
             ds.playerDeposits[roomId][player] = 0;
             ds.rooms[roomId].depositPool -= amount;
-            ds.totalLockedFunds -= amount;
+            ds.totalLockedFundsByToken[token] -= amount;
 
-            (bool sent, ) = payable(player).call{value: amount}("");
-            if (!sent) revert("Refund failed");
+            safeTransfer(token, player, amount);
             emit DepositRefunded(roomId, player, amount);
         }
     }
@@ -485,5 +492,33 @@ library LibGame {
 
         address signer = ecrecover(ethHash, v, r, s);
         if (signer != ds.gameMaster) revert Unauthorized();
+    }
+
+    // ---- Token Helpers ----
+
+    /**
+     * @notice Safe transfer of native ETH or ERC20 tokens
+     */
+    function safeTransfer(address token, address to, uint256 amount) internal {
+        if (amount == 0) return;
+        if (token == address(0)) {
+            (bool sent, ) = payable(to).call{value: amount}("");
+            require(sent, "ETH transfer failed");
+        } else {
+            IERC20(token).safeTransfer(to, amount);
+        }
+    }
+
+    /**
+     * @notice Safe transfer from user to contract (ERC20 only)
+     */
+    function safeReceive(address token, address from, uint256 amount) internal {
+        if (amount == 0) return;
+        if (token != address(0)) {
+            IERC20(token).safeTransferFrom(from, address(this), amount);
+        } else {
+            // Native ETH is already in the contract via msg.value
+            require(msg.value >= amount, "Insufficient ETH sent");
+        }
     }
 }
