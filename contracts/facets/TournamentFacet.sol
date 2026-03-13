@@ -92,14 +92,16 @@ contract TournamentFacet {
                 }
             }
 
-            // Global effects
-            ds.totalLockedFundsByToken[t.paymentToken] -= totalRefunded;
-            t.prizePool = 0;
-
             // Pass 2: External calls (Interactions)
             for (uint256 i = 0; i < participants.length; i++) {
                 address p = participants[i];
-                LibGame.safeTransfer(t.paymentToken, p, refundAmount);
+                // 🆕 Double refund protection: check if still marked as participant
+                // (flags were set to false in Pass 1, but if someone is in the list twice,
+                // we must be careful. Actually, we need to check the mapping.)
+                if (ds.isTournamentParticipant[tournamentId][p]) {
+                    ds.isTournamentParticipant[tournamentId][p] = false;
+                    LibGame.safeTransfer(t.paymentToken, p, refundAmount);
+                }
             }
         }
         
@@ -121,11 +123,14 @@ contract TournamentFacet {
         }
 
         // Password check
-        if (t.passwordHash != bytes32(0)) {
+        if (t.passwordHash != 0) {
             require(keccak256(abi.encodePacked(password)) == t.passwordHash, "Invalid password");
         }
 
         if (t.buyIn > 0) {
+            if (t.paymentToken != address(0)) {
+                require(msg.value == 0, "ETH not accepted for token tournaments");
+            }
             LibGame.safeReceive(t.paymentToken, msg.sender, t.buyIn);
             t.prizePool += t.buyIn;
             ds.totalLockedFundsByToken[t.paymentToken] += t.buyIn;
@@ -150,8 +155,8 @@ contract TournamentFacet {
         if (ds.prizesClaimed[roomId]) revert LibGame.AlreadyClaimed();
 
         bool mafiaWon = ds.gameResult[roomId];
-        uint128 prizePool = room.depositPool;
-        
+        // uint128 prizePool = room.depositPool; // This line is removed
+
         // Front-run protection: only GM or winners can trigger distribution
         bool isWinner = false;
         MafiaTypes.Role myRole = ds.playerRoles[roomId][msg.sender];
@@ -163,39 +168,66 @@ contract TournamentFacet {
         require(msg.sender == ds.gameMaster || isWinner, "Not authorized to distribute");
 
         MafiaTypes.Tournament storage t = ds.tournaments[room.tournamentId];
+        
+        // 🆕 P0 Fix: Calculate prize pool for this room
+        uint256 currentPrizePool; // Renamed from prizePool to avoid conflict
+        if (room.tournamentId > 0) {
+            // If it's a tournament, prize pool is proportional to players in this room
+            // Example: totalPlayers=20, roomPlayers=10 -> prizePool = t.prizePool * 10 / 20
+            currentPrizePool = (uint256(t.prizePool) * room.playersCount) / t.participants.length;
+        } else {
+            currentPrizePool = room.depositPool;
+        }
+
         ds.prizesClaimed[roomId] = true;
-        ds.totalLockedFundsByToken[t.paymentToken] -= prizePool;
+        ds.totalLockedFundsByToken[t.paymentToken] -= currentPrizePool;
+
+        // 🆕 P1 Fix: Collect 10% Platform Fee
+        uint256 platformFee = currentPrizePool / 10;
+        uint256 distributablePrize = currentPrizePool - platformFee;
+        ds.platformFeeBalances[t.paymentToken] += platformFee;
 
         MafiaTypes.Player[] storage players = ds.roomPlayers[roomId];
-        uint256 totalShares = 0;
-        uint8[] memory multipliers = new uint8[](players.length);
+        // uint256 totalShares = 0; // This line is removed
+        uint8[] memory multipliers = new uint8[](players.length); // This line is the anchor
 
-        for (uint8 i = 0; i < players.length; i++) {
-            MafiaTypes.Role role = ds.playerRoles[roomId][players[i].wallet];
-            bool winnerFound = false;
-            
+        uint256 winnersCount = 0;
+        uint256 totalShares = 0;
+
+        for (uint256 i = 0; i < players.length; i++) {
+            address player = players[i].wallet;
+            MafiaTypes.Role role = ds.playerRoles[roomId][player];
+            bool isWinnerPlayer = false;
+
             if (mafiaWon) {
-                winnerFound = (role == MafiaTypes.Role.MAFIA);
+                isWinnerPlayer = (role == MafiaTypes.Role.MAFIA);
             } else {
-                winnerFound = (role != MafiaTypes.Role.MAFIA && role != MafiaTypes.Role.NONE);
+                // Team Citizens/Town (Town, Doctor, Detective)
+                isWinnerPlayer = (role != MafiaTypes.Role.MAFIA && role != MafiaTypes.Role.NONE);
             }
 
-            if (winnerFound) {
+            if (isWinnerPlayer) {
+                winnersCount++;
+                // 🆕 Alive (FLAG_ACTIVE) x2, Dead x1
                 uint8 m = ((players[i].flags & LibGame.FLAG_ACTIVE) != 0) ? 2 : 1;
                 multipliers[i] = m;
                 totalShares += m;
             }
         }
 
-        require(totalShares > 0, "No winners found");
+        if (totalShares == 0) {
+            ds.platformFeeBalances[t.paymentToken] += distributablePrize;
+            return;
+        }
 
-        uint128 totalDistributed = 0;
+        uint256 shareValue = distributablePrize / totalShares;
+        uint256 totalDistributed = 0;
         address[] memory winnersAddresses = new address[](players.length);
         uint128[] memory payouts = new uint128[](players.length);
 
-        for (uint8 i = 0; i < players.length; i++) {
+        for (uint256 i = 0; i < players.length; i++) {
             if (multipliers[i] > 0) {
-                uint128 payout = uint128((uint256(prizePool) * multipliers[i]) / totalShares);
+                uint128 payout = uint128(shareValue * multipliers[i]);
                 totalDistributed += payout;
                 winnersAddresses[i] = players[i].wallet;
                 payouts[i] = payout;
@@ -203,8 +235,9 @@ contract TournamentFacet {
         }
 
         // Effects before Interactions
-        if (prizePool > totalDistributed) {
-            ds.platformFeeBalances[t.paymentToken] += (prizePool - totalDistributed);
+        uint256 dust = distributablePrize - totalDistributed;
+        if (dust > 0) {
+            ds.platformFeeBalances[t.paymentToken] += dust;
         }
 
         if (room.tournamentId > 0) {
