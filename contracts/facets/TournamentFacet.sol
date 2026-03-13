@@ -72,6 +72,10 @@ contract TournamentFacet {
             uint128 refundAmount = t.buyIn;
             for (uint256 i = 0; i < participants.length; i++) {
                 address p = participants[i];
+                // Prevent double refund if participants array somehow has duplicates
+                if (!ds.isTournamentParticipant[tournamentId][p]) continue;
+                ds.isTournamentParticipant[tournamentId][p] = false;
+
                 (bool sent, ) = payable(p).call{value: refundAmount}("");
                 if (sent) {
                     ds.totalLockedFunds -= refundAmount;
@@ -90,6 +94,7 @@ contract TournamentFacet {
         require(t.phase == MafiaTypes.TournamentPhase.REGISTRATION, "Not in registration");
         require(block.timestamp <= t.registrationDeadline, "Registration closed");
         require(t.participants.length < t.maxPlayers, "Tournament full");
+        require(!ds.isTournamentParticipant[tournamentId][msg.sender], "Already joined");
 
         if (t.buyIn > 0) {
             require(msg.value >= t.buyIn, "Insufficient buy-in");
@@ -98,6 +103,7 @@ contract TournamentFacet {
         }
 
         t.participants.push(msg.sender);
+        ds.isTournamentParticipant[tournamentId][msg.sender] = true;
         emit LibGame.TournamentJoined(tournamentId, msg.sender);
     }
 

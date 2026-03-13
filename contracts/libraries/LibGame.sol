@@ -353,7 +353,9 @@ library LibGame {
                 // Let's reduce it.
                 ds.rooms[roomId].depositPool -= amount;
                 ds.platformFeeBalance += amount;
-                // totalLockedFunds remains same as it's still in the contract.
+                // Corrected: totalLockedFunds must decrease when moving to platform fees 
+                // because platform fees are withdrawn separately.
+                ds.totalLockedFunds -= amount;
             }
             emit DepositSlashed(roomId, player, amount, reason);
         }
