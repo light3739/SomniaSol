@@ -339,6 +339,11 @@ library LibGame {
             emit VotingFinalized(roomId, address(0), 0);
         }
 
+        // Cleanup voteCounts to prevent pollution of next day or night repurpose
+        for (uint256 i = 0; i < players.length; i++) {
+            delete ds.voteCounts[roomId][players[i].wallet];
+        }
+
         if (!checkWinCondition(roomId)) {
             transitionToNight(roomId);
         }

@@ -83,24 +83,26 @@ contract TournamentFacet {
             uint128 refundAmount = t.buyIn;
             uint128 totalRefunded = 0;
             
-            // Pass 1: Local state (Effects)
+            // Pass 1: Local state (Effects) + Interaction memory cache
+            bool[] memory toRefund = new bool[](participants.length);
             for (uint256 i = 0; i < participants.length; i++) {
                 address p = participants[i];
                 if (ds.isTournamentParticipant[tournamentId][p]) {
                     ds.isTournamentParticipant[tournamentId][p] = false;
+                    toRefund[i] = true;
                     totalRefunded += refundAmount;
                 }
             }
 
+            // Global effects
+            ds.totalLockedFundsByToken[t.paymentToken] -= totalRefunded;
+            // No need to set t.prizePool = 0 here as refunds are taken from t.prizePool implicitly
+            // t.prizePool -= uint128(totalRefunded); // Better for accounting
+
             // Pass 2: External calls (Interactions)
             for (uint256 i = 0; i < participants.length; i++) {
-                address p = participants[i];
-                // 🆕 Double refund protection: check if still marked as participant
-                // (flags were set to false in Pass 1, but if someone is in the list twice,
-                // we must be careful. Actually, we need to check the mapping.)
-                if (ds.isTournamentParticipant[tournamentId][p]) {
-                    ds.isTournamentParticipant[tournamentId][p] = false;
-                    LibGame.safeTransfer(t.paymentToken, p, refundAmount);
+                if (toRefund[i]) {
+                    LibGame.safeTransfer(t.paymentToken, participants[i], refundAmount);
                 }
             }
         }
@@ -181,6 +183,9 @@ contract TournamentFacet {
 
         ds.prizesClaimed[roomId] = true;
         ds.totalLockedFundsByToken[t.paymentToken] -= currentPrizePool;
+        if (room.tournamentId > 0) {
+            t.prizePool -= uint128(currentPrizePool);
+        }
 
         // 🆕 P1 Fix: Collect 10% Platform Fee
         uint256 platformFee = currentPrizePool / 10;
