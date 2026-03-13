@@ -94,7 +94,7 @@ contract NightFacet {
             timestamp: uint32(block.timestamp),
             sender: player
         }));
-        emit LibGame.MafiaMessageSent(roomId, player, encryptedMessage);
+        emit LibGame.MafiaMessageSent(roomId, encryptedMessage);
 
         LibGame.nonReentrantAfter();
     }
@@ -114,7 +114,7 @@ contract NightFacet {
         LibGame.setFlag(roomId, player, LibGame.FLAG_HAS_COMMITTED);
         ds.mafiaTargetCommits[roomId][player].commitHash = targetHash;
         ds.mafiaCommittedCount[roomId]++;
-        emit LibGame.MafiaTargetCommitted(roomId, player, targetHash);
+        emit LibGame.MafiaTargetCommitted(roomId, targetHash);
 
         LibGame.nonReentrantAfter();
     }
@@ -143,7 +143,7 @@ contract NightFacet {
         ds.mafiaTargetCommits[roomId][player].revealed = true;
         LibGame.setFlag(roomId, player, LibGame.FLAG_HAS_REVEALED);
         ds.mafiaRevealedCount[roomId]++;
-        emit LibGame.MafiaTargetRevealed(roomId, player, target);
+        emit LibGame.MafiaTargetRevealed(roomId, target);
 
         if (ds.mafiaRevealedCount[roomId] == ds.mafiaCommittedCount[roomId]) _checkMafiaConsensus(roomId);
 

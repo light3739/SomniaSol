@@ -56,9 +56,18 @@ library LibStorage {
 
         // ---- ZK ----
         address zkVerifier;
+        mapping(uint256 => bool) gameResult;    // true = mafia won, false = town won
+        mapping(uint256 => bool) prizesClaimed; // track if prizes were distributed
+        mapping(bytes32 => bool) proofNullifiers; // 🆕 Prevent ZK proof replay attacks
 
-        // ---- Admin ----
+        // ---- Admin & Funds ----
         uint256 nextRoomId;
+        uint256 nextTournamentId;
+        mapping(uint256 => MafiaTypes.Tournament) tournaments;
+        uint128 platformFeeBalance;             // Accumulated platform fees
+        uint128 totalLockedFunds;               // Total funds locked in active games/tournaments
+        mapping(address => uint8) activeTournaments; // 🆕 Track active tournaments per organizer to prevent spam
+        uint32 feeWithdrawalReadyAt;            // 🆕 Timelock for fee withdrawal
 
         // ---- Reentrancy ----
         uint256 reentrancyStatus;

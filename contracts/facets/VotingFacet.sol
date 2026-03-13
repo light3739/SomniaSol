@@ -69,6 +69,7 @@ contract VotingFacet {
         address player = LibGame.requireActiveParticipant(roomId);
 
         LibStorage.Storage storage ds = LibStorage.s();
+        if (ds.rooms[roomId].phase != MafiaTypes.GamePhase.ENDED) revert LibGame.WrongPhase();
         if (ds.playerRoles[roomId][player] != MafiaTypes.Role.NONE) revert LibGame.RoleAlreadyRevealed();
         if (ds.roleCommits[roomId][player] == bytes32(0)) revert LibGame.RoleNotCommitted();
         if (bytes(salt).length > 64) revert LibGame.SaltTooLong();

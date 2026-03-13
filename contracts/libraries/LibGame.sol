@@ -13,6 +13,7 @@ library LibGame {
     uint32 constant VOTING_TIMEOUT = 90 seconds;
     uint32 constant SESSION_DURATION = 4 hours;
     uint32 constant MAX_ARRAY_SIZE = 50;
+    uint32 public constant CANCEL_GRACE_PERIOD = 2 hours; // 🆕 Grace period after which anyone can cancel tournament
 
     // ---- Player flags (bitfield) ----
     uint32 constant FLAG_CONFIRMED_ROLE    = 0x1;
@@ -101,9 +102,9 @@ library LibGame {
     event EmergencyUnpause(address indexed admin);
     event RoleCommitted(uint256 indexed roomId, address player, bytes32 commitHash);
     event RoleRevealed(uint256 indexed roomId, address player, MafiaTypes.Role role);
-    event MafiaMessageSent(uint256 indexed roomId, address sender, bytes encryptedMessage);
-    event MafiaTargetCommitted(uint256 indexed roomId, address player, bytes32 commitHash);
-    event MafiaTargetRevealed(uint256 indexed roomId, address player, address target);
+    event MafiaMessageSent(uint256 indexed roomId, bytes encryptedMessage);
+    event MafiaTargetCommitted(uint256 indexed roomId, bytes32 commitHash);
+    event MafiaTargetRevealed(uint256 indexed roomId, address target);
     event MafiaConsensusReached(uint256 indexed roomId, address target, bool success);
     event MafiaCheaterPunished(uint256 indexed roomId, address cheater, MafiaTypes.Role actualRole);
     event ZkVerifierUpdated(address indexed newVerifier);
@@ -112,6 +113,7 @@ library LibGame {
     event DepositCollected(uint256 indexed roomId, address player, uint128 amount);
     event DepositSlashed(uint256 indexed roomId, address player, uint128 amount, string reason);
     event DepositRefunded(uint256 indexed roomId, address player, uint128 amount);
+    event FeeWithdrawalInitiated(address indexed owner, uint128 amount, uint256 readyAt);
 
     // ---- Reentrancy guard ----
     function nonReentrantBefore() internal {
@@ -322,9 +324,11 @@ library LibGame {
     function collectDeposit(uint256 roomId, address player, uint128 required) internal {
         if (msg.value < required) revert InsufficientDeposit();
         LibStorage.Storage storage ds = LibStorage.s();
-        ds.playerDeposits[roomId][player] += uint128(msg.value);
-        ds.rooms[roomId].depositPool += uint128(msg.value);
-        emit DepositCollected(roomId, player, uint128(msg.value));
+        uint128 amount = uint128(msg.value);
+        ds.playerDeposits[roomId][player] += amount;
+        ds.rooms[roomId].depositPool += amount;
+        ds.totalLockedFunds += amount;
+        emit DepositCollected(roomId, player, amount);
     }
 
     function slashDeposit(uint256 roomId, address player, string memory reason) internal {
@@ -332,7 +336,14 @@ library LibGame {
         uint128 amount = ds.playerDeposits[roomId][player];
         if (amount > 0) {
             ds.playerDeposits[roomId][player] = 0;
-            // Slashed funds remain in contract for admin withdrawal
+            // If prizes already distributed, slashed funds go to platform fees to avoid hanging in contract
+            if (ds.prizesClaimed[roomId]) {
+                ds.platformFeeBalance += amount;
+                ds.totalLockedFunds -= amount;
+            } else {
+                // Slashed funds stay in ds.rooms[roomId].depositPool to be claimed by winners
+                // totalLockedFunds remains unchanged as the money is still in the system
+            }
             emit DepositSlashed(roomId, player, amount, reason);
         }
     }
@@ -342,12 +353,37 @@ library LibGame {
         if (ds.depositRefunded[roomId][player]) revert DepositAlreadyRefunded();
         uint128 amount = ds.playerDeposits[roomId][player];
         if (amount > 0) {
-            ds.playerDeposits[roomId][player] = 0;
+            // Checks-Effects-Interactions (CEI)
             ds.depositRefunded[roomId][player] = true;
+            ds.playerDeposits[roomId][player] = 0;
             ds.rooms[roomId].depositPool -= amount;
+            ds.totalLockedFunds -= amount;
+
             (bool sent, ) = payable(player).call{value: amount}("");
-            require(sent, "Refund failed");
+            if (!sent) revert("Refund failed");
             emit DepositRefunded(roomId, player, amount);
         }
+    }
+
+    // ---- Signature Verification ----
+    function verifyGmSignature(uint256 roomId, address player, bytes calldata signature) internal view {
+        LibStorage.Storage storage ds = LibStorage.s();
+        if (signature.length != 65) revert Unauthorized();
+
+        bytes32 messageHash = keccak256(abi.encodePacked(roomId, player));
+        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
+
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := calldataload(signature.offset)
+            s := calldataload(add(signature.offset, 32))
+            v := byte(0, calldataload(add(signature.offset, 64)))
+        }
+        if (v < 27) v += 27;
+
+        address signer = ecrecover(ethHash, v, r, s);
+        if (signer != ds.gameMaster) revert Unauthorized();
     }
 }

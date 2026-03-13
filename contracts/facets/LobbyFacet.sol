@@ -39,11 +39,32 @@ contract LobbyFacet {
         emit LibGame.EmergencyUnpause(msg.sender);
     }
 
+    function initiateFeeWithdrawal() external {
+        LibGame.requireOwner();
+        LibStorage.Storage storage ds = LibStorage.s();
+        require(ds.platformFeeBalance > 0, "No fees to withdraw");
+        ds.feeWithdrawalReadyAt = uint32(block.timestamp + 24 hours);
+        emit LibGame.FeeWithdrawalInitiated(msg.sender, ds.platformFeeBalance, ds.feeWithdrawalReadyAt);
+    }
+
     function withdrawFees() external {
         LibGame.requireOwner();
         LibGame.nonReentrantBefore();
-        (bool sent, ) = payable(msg.sender).call{value: address(this).balance}("");
+        LibStorage.Storage storage ds = LibStorage.s();
+        
+        require(ds.feeWithdrawalReadyAt != 0, "Withdrawal not initiated");
+        require(block.timestamp >= ds.feeWithdrawalReadyAt, "Timelock not expired");
+        require(block.timestamp <= ds.feeWithdrawalReadyAt + 48 hours, "Timelock expired, re-initiate");
+
+        uint128 amount = ds.platformFeeBalance;
+        require(amount > 0, "No fees to withdraw");
+        
+        ds.platformFeeBalance = 0;
+        ds.feeWithdrawalReadyAt = 0;
+
+        (bool sent, ) = payable(msg.sender).call{value: amount}("");
         require(sent, "Failed to withdraw");
+        
         LibGame.nonReentrantAfter();
     }
 
@@ -67,7 +88,9 @@ contract LobbyFacet {
         uint8 maxPlayers,
         string calldata nickname,
         bytes calldata publicKey,
-        address sessionAddress
+        address sessionAddress,
+        bool isPrivate,
+        uint256 tournamentId
     ) external payable returns (uint256) {
         LibGame.nonReentrantBefore();
         LibGame.requireNotPaused();
@@ -99,7 +122,9 @@ contract LobbyFacet {
             revealedCount: 0,
             keysSharedCount: 0,
             depositPool: 0,
-            depositPerPlayer: depositRequired
+            depositPerPlayer: depositRequired,
+            isPrivate: isPrivate,
+            tournamentId: tournamentId
         });
 
         emit LibGame.RoomCreated(roomId, msg.sender, roomName, maxPlayers);
@@ -116,8 +141,8 @@ contract LobbyFacet {
         ds.rooms[roomId].playersCount = 1;
         ds.rooms[roomId].aliveCount = 1;
 
-        // Collect deposit if required
-        if (depositRequired > 0) {
+        // Collect deposit if required and not part of a tournament
+        if (tournamentId == 0 && depositRequired > 0) {
             LibGame.collectDeposit(roomId, msg.sender, depositRequired);
         }
 
@@ -141,7 +166,8 @@ contract LobbyFacet {
         uint256 roomId,
         string calldata nickname,
         bytes calldata publicKey,
-        address sessionAddress
+        address sessionAddress,
+        bytes calldata gmSignature
     ) external payable {
         LibGame.nonReentrantBefore();
         LibGame.requireNotPaused();
@@ -153,6 +179,11 @@ contract LobbyFacet {
         if (ds.isPlayerInRoom[roomId][msg.sender]) revert LibGame.AlreadyJoined();
         if (bytes(nickname).length > 128) revert LibGame.NicknameTooLong();
         if (publicKey.length > 1024) revert LibGame.PublicKeyTooLong();
+
+        // Private room: verify GM signature (password checked off-chain by GM server)
+        if (room.isPrivate) {
+            LibGame.verifyGmSignature(roomId, msg.sender, gmSignature);
+        }
 
         uint8 idx = uint8(ds.roomPlayers[roomId].length);
         ds.roomPlayers[roomId].push(MafiaTypes.Player({
@@ -167,9 +198,9 @@ contract LobbyFacet {
         room.playersCount++;
         room.aliveCount++;
 
-        // Collect deposit if required
+        // Collect deposit if required and not part of a tournament
         uint128 depositRequired = room.depositPerPlayer;
-        if (depositRequired > 0) {
+        if (room.tournamentId == 0 && depositRequired > 0) {
             LibGame.collectDeposit(roomId, msg.sender, depositRequired);
         }
 

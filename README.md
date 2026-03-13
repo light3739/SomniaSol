@@ -58,3 +58,19 @@ Use `SOMNIA_TESTNET` or `AVALANCHE_FUJI` with your `DIAMOND_ADDRESS` after deplo
 ## More Details
 
 See `DEPLOYMENT.md` for architecture, GM mode, admin operations, and upgrade flow.
+
+---
+
+## 🚀 Recent Features (v1.1)
+
+### 🏅 Tournament System
+- **Freeroll & Buy-in**: Support for both organizer-funded and player-funded tournaments.
+- **Weighted Payouts**: Winners receive shares based on status (Alive 2x, Dead 1x).
+- **Anti-Spam**: Per-organizer tournament limits and registration deadlines.
+
+### 🛡️ Advanced Security
+- **Cross-Facet Reentrancy Guard**: Shared storage-level lock for Diamond proxy protection.
+- **ZK Replay Protection**: Nullifiers prevent reuse of the same proof.
+- **Front-running Protection**: Payouts restricted to winners/GM.
+- **Timelock Withdrawal**: 24h delay for platform fee withdrawals.
+- **Spectator Safety**: Obfuscated events to prevent role leaks in block explorers.
