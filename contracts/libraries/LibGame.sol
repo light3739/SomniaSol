@@ -321,6 +321,7 @@ library LibGame {
         bool tie = false;
 
         for (uint256 i = 0; i < players.length; i++) {
+            if (!hasFlag(players[i].flags, MafiaTypes.FLAG_ACTIVE)) continue;
             address p = players[i].wallet;
             uint8 v = ds.voteCounts[roomId][p];
             if (v > maxVotes) {
@@ -379,7 +380,10 @@ library LibGame {
 
         // Cleanup night repurpose
         for (uint256 i = 0; i < players.length; i++) {
-            delete targetCounts[players[i].wallet];
+            address p = players[i].wallet;
+            delete targetCounts[p];
+            address t = ds.mafiaTargetCommits[roomId][p].target;
+            if (t != address(0)) delete targetCounts[t];
         }
 
         if (!checkWinCondition(roomId)) {
@@ -423,7 +427,7 @@ library LibGame {
     function collectDeposit(uint256 roomId, address player, uint128 required) internal {
         if (msg.value < required) revert InsufficientDeposit();
         LibStorage.Storage storage ds = LibStorage.s();
-        uint128 amount = uint128(msg.value);
+        uint128 amount = required;
         ds.playerDeposits[roomId][player] += amount;
         ds.rooms[roomId].depositPool += amount;
         ds.totalLockedFundsByToken[address(0)] += amount;
@@ -481,8 +485,9 @@ library LibGame {
     function verifyGmSignature(uint256 roomId, address player, bytes calldata signature) internal view {
         LibStorage.Storage storage ds = LibStorage.s();
         if (signature.length != 65) revert Unauthorized();
-
-        bytes32 messageHash = keccak256(abi.encodePacked(roomId, player));
+        
+        // Include chainId to prevent cross-chain replay attacks
+        bytes32 messageHash = keccak256(abi.encodePacked(block.chainid, roomId, player));
         bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
 
         bytes32 r;
