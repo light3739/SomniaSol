@@ -321,7 +321,7 @@ library LibGame {
         bool tie = false;
 
         for (uint256 i = 0; i < players.length; i++) {
-            if (!hasFlag(players[i].flags, MafiaTypes.FLAG_ACTIVE)) continue;
+            if ((players[i].flags & FLAG_ACTIVE) == 0) continue;
             address p = players[i].wallet;
             uint8 v = ds.voteCounts[roomId][p];
             if (v > maxVotes) {
@@ -380,10 +380,7 @@ library LibGame {
 
         // Cleanup night repurpose
         for (uint256 i = 0; i < players.length; i++) {
-            address p = players[i].wallet;
-            delete targetCounts[p];
-            address t = ds.mafiaTargetCommits[roomId][p].target;
-            if (t != address(0)) delete targetCounts[t];
+            delete targetCounts[players[i].wallet];
         }
 
         if (!checkWinCondition(roomId)) {
