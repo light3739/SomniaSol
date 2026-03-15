@@ -65,6 +65,16 @@ const GAMEEND_SELECTORS = [
   toFunctionSelector("endGameZK(uint256,uint256[2],uint256[2][2],uint256[2],uint256[5])"),
 ] as `0x${string}`[];
 
+const TOURNAMENT_SELECTORS = [
+  toFunctionSelector("createTournament(string,uint128,uint8,uint8,bytes32,address,uint128)"),
+  toFunctionSelector("cancelTournament(uint256)"),
+  toFunctionSelector("joinTournament(uint256,string)"),
+  toFunctionSelector("distributeMafiaPrizes(uint256)"),
+  toFunctionSelector("toggleTournamentWhitelist(uint256,bool)"),
+  toFunctionSelector("addToTournamentWhitelist(uint256,address[])"),
+  toFunctionSelector("removeFromTournamentWhitelist(uint256,address[])"),
+] as `0x${string}`[];
+
 async function main() {
   const { viem } = await network.connect();
   const [admin] = await viem.getWalletClients();
@@ -115,6 +125,9 @@ async function main() {
   const gameEndFacet = await viem.deployContract("GameEndFacet", [], txOpts);
   console.log("   GameEndFacet:", gameEndFacet.address);
 
+  const tournamentFacet = await viem.deployContract("TournamentFacet", [], txOpts);
+  console.log("   TournamentFacet:", tournamentFacet.address);
+
   // 4. Register selectors
   console.log("4. Registering selectors...");
   const facets = [
@@ -123,6 +136,7 @@ async function main() {
     { name: "VotingFacet", addr: votingFacet.address, sel: VOTING_SELECTORS },
     { name: "NightFacet", addr: nightFacet.address, sel: NIGHT_SELECTORS },
     { name: "GameEndFacet", addr: gameEndFacet.address, sel: GAMEEND_SELECTORS },
+    { name: "TournamentFacet", addr: tournamentFacet.address, sel: TOURNAMENT_SELECTORS },
   ];
 
   for (const f of facets) {

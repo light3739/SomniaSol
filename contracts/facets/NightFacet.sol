@@ -74,4 +74,30 @@ contract NightFacet {
             LibGame.finalizeNight(roomId);
         }
     }
+
+    function getMafiaConsensus(uint256 roomId) external view returns (uint8 committed, uint8 revealed, address consensusTarget) {
+        LibStorage.Storage storage ds = LibStorage.s();
+        return (
+            ds.mafiaCommittedCount[roomId],
+            ds.mafiaRevealedCount[roomId],
+            ds.mafiaConsensusTarget[roomId]
+        );
+    }
+
+    /**
+     * @notice Force resolve the night. Can be called if mafia members are idle.
+     * @param victim The player to kill (if consensus exists on-chain or passed by GM)
+     */
+    function resolveNightAsGameMaster(uint256 roomId, address victim, address /*investigated*/) external {
+        LibStorage.Storage storage ds = LibStorage.s();
+        if (ds.rooms[roomId].phase != MafiaTypes.GamePhase.NIGHT) revert LibGame.WrongPhase();
+        
+        // Priority: If victim is passed by GM/caller, use it. Otherwise use on-chain consensus.
+        if (victim != address(0)) {
+            LibGame.killPlayer(roomId, victim);
+            emit LibGame.NightFinalized(roomId, victim, address(0));
+        } else {
+            LibGame.finalizeNight(roomId);
+        }
+    }
 }

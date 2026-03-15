@@ -309,4 +309,39 @@ contract LobbyFacet {
     function getDefaultDeposit() external view returns (uint128) {
         return LibStorage.s().defaultDeposit;
     }
+
+    /**
+     * @notice Force advance the room phase if the deadline has passed.
+     * @param roomId The ID of the room to advance.
+     */
+    function forcePhaseTimeout(uint256 roomId) external nonReentrant {
+        LibGame.requireNotPaused();
+        
+        LibStorage.Storage storage ds = LibStorage.s();
+        MafiaTypes.GameRoom storage room = ds.rooms[roomId];
+        
+        if (room.phase == MafiaTypes.GamePhase.LOBBY || room.phase == MafiaTypes.GamePhase.ENDED) revert LibGame.WrongPhase();
+        if (block.timestamp <= room.phaseDeadline) revert LibGame.TooEarly();
+
+        if (room.phase == MafiaTypes.GamePhase.SHUFFLING) {
+            // Force transition to REVEAL phase
+            LibGame.transitionToReveal(roomId);
+        } else if (room.phase == MafiaTypes.GamePhase.REVEAL) {
+            // Force transition to DAY phase
+            LibGame.transitionToDay(roomId);
+        } else if (room.phase == MafiaTypes.GamePhase.DAY) {
+            // Force transition to VOTING phase
+            room.phase = MafiaTypes.GamePhase.VOTING;
+            room.votedCount = 0;
+            room.lastActionTimestamp = uint32(block.timestamp);
+            room.phaseDeadline = uint32(block.timestamp + LibGame.VOTING_TIMEOUT);
+            emit LibGame.VotingStarted(roomId);
+        } else if (room.phase == MafiaTypes.GamePhase.VOTING) {
+            // Force finalize voting results
+            LibGame.finalizeVotingInternal(roomId);
+        } else if (room.phase == MafiaTypes.GamePhase.NIGHT) {
+            // Force finalize night results
+            LibGame.finalizeNight(roomId);
+        }
+    }
 }
