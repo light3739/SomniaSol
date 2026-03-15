@@ -9,10 +9,11 @@ const LOBBY_SELECTORS = [
   toFunctionSelector("setDefaultDeposit(uint128)"),
   toFunctionSelector("pause()"),
   toFunctionSelector("unpause()"),
-  toFunctionSelector("withdrawFees()"),
+  toFunctionSelector("initiateFeeWithdrawal(address)"),
+  toFunctionSelector("withdrawFees(address)"),
   toFunctionSelector("revokeSessionKey()"),
-  toFunctionSelector("createAndJoin(string,uint8,string,bytes,address)"),
-  toFunctionSelector("joinRoom(uint256,string,bytes,address)"),
+  toFunctionSelector("createAndJoin(string,uint8,string,bytes,address,bool,uint256)"),
+  toFunctionSelector("joinRoom(uint256,string,bytes,address,bytes)"),
   toFunctionSelector("startGame(uint256)"),
   toFunctionSelector("getPlayers(uint256)"),
   toFunctionSelector("getRoom(uint256)"),
@@ -25,6 +26,7 @@ const LOBBY_SELECTORS = [
   toFunctionSelector("getPlayerFlags(uint256,address)"),
   toFunctionSelector("getPlayerDeposit(uint256,address)"),
   toFunctionSelector("getDefaultDeposit()"),
+  toFunctionSelector("forcePhaseTimeout(uint256)"),
 ] as `0x${string}`[];
 
 const SHUFFLE_SELECTORS = [
@@ -40,25 +42,15 @@ const SHUFFLE_SELECTORS = [
 const VOTING_SELECTORS = [
   toFunctionSelector("startVoting(uint256)"),
   toFunctionSelector("vote(uint256,address)"),
-  toFunctionSelector("revealRole(uint256,uint8,string)"),
-  toFunctionSelector("endGameAutomatically(uint256)"),
-  toFunctionSelector("forcePhaseTimeout(uint256)"),
-  toFunctionSelector("claimRefund(uint256)"),
-  toFunctionSelector("getAliveMafiaCount(uint256)"),
-  toFunctionSelector("getRevealedMafiaCount(uint256)"),
+  toFunctionSelector("finalizeVoting(uint256)"),
 ] as `0x${string}`[];
 
 const NIGHT_SELECTORS = [
-  toFunctionSelector("commitNightAction(uint256,bytes32)"),
-  toFunctionSelector("revealNightAction(uint256,uint8,address,string)"),
-  toFunctionSelector("sendMafiaMessage(uint256,bytes)"),
+  toFunctionSelector("mafiaMessage(uint256,string)"),
   toFunctionSelector("commitMafiaTarget(uint256,bytes32)"),
   toFunctionSelector("revealMafiaTarget(uint256,address,string)"),
-  toFunctionSelector("endNight(uint256)"),
-  toFunctionSelector("resolveNightAsGameMaster(uint256,address,address)"),
-  toFunctionSelector("getMafiaChat(uint256)"),
   toFunctionSelector("getMafiaConsensus(uint256)"),
-  toFunctionSelector("gameMaster()"),
+  toFunctionSelector("resolveNightAsGameMaster(uint256,address,address)"),
 ] as `0x${string}`[];
 
 const GAMEEND_SELECTORS = [
